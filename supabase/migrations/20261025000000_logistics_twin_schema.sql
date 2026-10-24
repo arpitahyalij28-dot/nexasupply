@@ -5,7 +5,23 @@
 -- Idempotent, re-runnable, strict Row-Level Security, multi-tenant isolation.
 -- ==============================================================================
 
--- 1. EXTEND PROFILES FOR THREE-ROLE RBAC (planner, driver, buyer)
+-- 1. BASE ORGANIZATIONS & PROFILES TABLES
+CREATE TABLE IF NOT EXISTS public.organizations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    org_id TEXT NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    email TEXT,
+    full_name TEXT,
+    role TEXT NOT NULL DEFAULT 'buyer',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
 -- Ensure 'demo-org' exists
 INSERT INTO public.organizations (id, name, slug)
 VALUES ('demo-org', 'Western Corridor Logistics Consortium', 'western-corridor-demo')
