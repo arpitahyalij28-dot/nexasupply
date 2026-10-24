@@ -132,17 +132,22 @@ export default function Login() {
       {/* Language Switcher in Top Right */}
       <div className="absolute top-4 right-4 flex items-center gap-1.5 p-1 bg-white border border-slate-200 rounded-xl shadow-2xs text-xs">
         <Languages className="w-3.5 h-3.5 text-slate-400 ml-1.5" />
-        {['en', 'hi', 'mr'].map((langCode) => (
+        {[
+          { code: 'en', label: 'English' },
+          { code: 'hi', label: 'हिंदी' },
+          { code: 'mr', label: 'मराठी' },
+        ].map(({ code, label }) => (
           <button
-            key={langCode}
-            onClick={() => setPreferredLanguage(langCode)}
-            className={`px-2 py-1 rounded-lg font-bold text-xs transition-colors cursor-pointer uppercase ${
-              preferredLanguage === langCode
+            key={code}
+            type="button"
+            onClick={() => setPreferredLanguage(code)}
+            className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+              preferredLanguage === code
                 ? 'bg-blue-50 text-blue-700 border border-blue-200'
                 : 'text-slate-500 hover:text-slate-900'
             }`}
           >
-            {langCode}
+            {label}
           </button>
         ))}
       </div>
@@ -173,7 +178,7 @@ export default function Login() {
         <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-slate-900">
-              {getAuthString(preferredLanguage, 'continueDemo', '⚡ Continue in Demo Sandbox')}
+              ⚡ Demo Sandbox Access
             </span>
             <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
               Offline Ready
@@ -188,9 +193,20 @@ export default function Login() {
             )}
           </p>
 
+          <button
+            type="button"
+            id="btn-continue-demo-sandbox"
+            onClick={() => handleDemoAccess('planner')}
+            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <span>{getAuthString(preferredLanguage, 'continueDemo', 'Continue in Demo Sandbox')}</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+
           <div className="grid grid-cols-3 gap-2 pt-1">
             <button
               type="button"
+              data-testid="demo-role-planner"
               onClick={() => handleDemoAccess('planner')}
               className="py-2 px-2 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-center transition-all cursor-pointer shadow-2xs group"
             >
@@ -200,6 +216,7 @@ export default function Login() {
 
             <button
               type="button"
+              data-testid="demo-role-driver"
               onClick={() => handleDemoAccess('driver')}
               className="py-2 px-2 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-center transition-all cursor-pointer shadow-2xs group"
             >
@@ -209,6 +226,7 @@ export default function Login() {
 
             <button
               type="button"
+              data-testid="demo-role-buyer"
               onClick={() => handleDemoAccess('buyer')}
               className="py-2 px-2 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl text-center transition-all cursor-pointer shadow-2xs group"
             >

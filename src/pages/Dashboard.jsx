@@ -2,7 +2,7 @@
 // Track 3-05: Regional Supply Network Twin (Suppliers, Warehouses, Buyers, Fleet, Routes)
 // Pure data-driven, offline-first with zero env vars and visible DEMO DATA badge.
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Factory,
   Warehouse,

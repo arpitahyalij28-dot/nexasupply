@@ -20,36 +20,35 @@
 ### 1.2 Run Schema Migrations
 1. In the Supabase project sidebar, click **SQL Editor** (icon with `>_`).
 2. Click **New Query**.
-3. Copy the entire contents of [supabase/migrations/20261022000000_create_reroute_schema.sql](supabase/migrations/20261022000000_create_reroute_schema.sql) and paste into the SQL editor.
-4. Click **Run**.
-5. Open another query, copy [supabase/migrations/20261022000001_handle_new_user_and_profiles.sql](supabase/migrations/20261022000001_handle_new_user_and_profiles.sql), and click **Run**.
-   - This creates 9 core relational tables: `organizations`, `profiles`, `trucks`, `shipments`, `assignments`, `disruption_events`, `telemetry_points`, `model_settings`, and `audit_log`.
-   - Attaches `handle_new_user()` trigger on `auth.users` to automatically create profiles with default least-privilege `shipper` role.
-   - Enables Row-Level Security (RLS) policies enforcing multi-tenant isolation via `public.current_user_org_id()` and role permissions (`dispatcher`, `shipper`, `driver`, `admin`).
-   - Configures idempotent realtime replication for `shipments`, `assignments`, and `disruption_events`.
+3. **Logistics Twin Migration (Required)**: Copy the entire contents of [supabase/migrations/20261025000000_logistics_twin_schema.sql](supabase/migrations/20261025000000_logistics_twin_schema.sql) and click **Run**.
+   - Creates the 10 core Logistics Twin relational tables: `organizations`, `profiles`, `networks`, `suppliers`, `warehouses`, `buyers`, `routes`, `vehicles`, `disruption_scenarios`, `plans`, `trips`, and `audit_log`.
+   - Enforces strict DB CHECK constraints mirroring engine domain shapes (stock limits, capacities, 4 vehicle truck classes, positive metrics).
+   - Installs Row-Level Security (RLS) on all tables with multi-tenant isolation via `public.current_org_id()`.
+   - Installs security-definer RPCs: `publish_plan(plan_id)`, `update_trip_status(trip_id, status)`, `reset_demo_network()`.
+   - Sets up Realtime replication for `networks`, `disruption_scenarios`, `plans`, and `trips`.
+4. *(Optional / Legacy ReRoute)*: If maintaining compatibility with legacy ReRoute tables:
+   - Run [supabase/migrations/20261022000000_create_reroute_schema.sql](supabase/migrations/20261022000000_create_reroute_schema.sql) and [supabase/migrations/20261022000001_handle_new_user_and_profiles.sql](supabase/migrations/20261022000001_handle_new_user_and_profiles.sql).
 
 ---
 
-### 1.3 Seed Demonstration Data
-1. In the Supabase **SQL Editor**, open another **New Query**.
-2. Copy the entire contents of [supabase/seed.sql](supabase/seed.sql) and paste into the editor.
-3. Click **Run**.
-   - Inserts the default organization `demo-org` (Western Corridor Logistics Consortium).
-   - Inserts 6 commercial trucks (`T101` - `T106`) across the Mumbai-Nashik-Pune-Surat network.
-   - Inserts 15 candidate backhaul consignments (`S1` - `S15`) including capacity, vehicle type, and time window edge cases.
-   - Sets baseline algorithm weights and fuel/emissions factors.
-
----
-
-### 1.4 Seed Demo User Accounts
-Run the user provisioning script locally using your project's `service_role` key:
+### 1.3 Seed Demonstration Data & Multi-Role Demo Users
+Seed the complete Western Maharashtra corridor network and create the 3 role accounts using the seed script:
 ```bash
-SUPABASE_SERVICE_ROLE_KEY="<your-service-role-key>" VITE_SUPABASE_URL="https://<your-project>.supabase.co" node scripts/seed-users.js
+# In your terminal (with Node 18+):
+SUPABASE_SERVICE_ROLE_KEY="<your-service-role-key>" \
+VITE_SUPABASE_URL="https://<your-project>.supabase.co" \
+DEMO_PASSWORD="DemoPassword2026!" \
+node scripts/seed-twin.mjs
 ```
-This automatically provisions 3 ready-to-test accounts with pre-set passwords:
-- Dispatcher: `dispatcher@demo.reroute` / `ReRoute2026!Demo`
-- Shipper: `shipper@demo.reroute` / `ReRoute2026!Demo`
-- Driver: `driver@demo.reroute` / `ReRoute2026!Demo` (assigned to truck `T101`)
+This script automatically:
+1. Connects via Supabase Admin service-role client.
+2. Creates the default organization `demo-org` (Western Corridor Logistics Consortium).
+3. Reads the exact demo network from [src/data/networkDemo.js](src/data/networkDemo.js) without duplication and inserts all suppliers, warehouses, buyers, routes, and vehicles into Supabase.
+4. Provisions 3 authenticated multi-role test accounts:
+   - **Planner**: `planner@demo.reroute` (Role: `planner`, Full network control)
+   - **Driver**: `driver@demo.reroute` (Role: `driver`, linked to vehicle `veh-nashik-1`)
+   - **Buyer**: `buyer@demo.reroute` (Role: `buyer`, linked to buyer `buy-thane-med`)
+5. Passes validation and verifies idempotent upserts.
 
 ---
 
