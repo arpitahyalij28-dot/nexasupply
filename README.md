@@ -11,7 +11,7 @@
 [![Leaflet](https://img.shields.io/badge/Leaflet-1.9-green.svg)](https://leafletjs.com/)
 [![Vitest](https://img.shields.io/badge/Vitest-2.1-yellow.svg)](https://vitest.dev/)
 
-Live Deployment: [https://logistics-twin.vercel.app/](https://logistics-twin.vercel.app/)
+Live Deployment: [https://nexasupply.vercel.app/](https://nexasupply.vercel.app/) • [https://logistics-twin.vercel.app/](https://logistics-twin.vercel.app/)
 
 ---
 
