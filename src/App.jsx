@@ -15,7 +15,6 @@ import { ClearDataConfirmModal, DemoPromptModal } from './components/ConfirmModa
 import { DataProvider } from './context/DataContext';
 import { ReRouteProvider, useReRoute } from './context/ReRouteContext';
 
-// Pages
 import Dashboard from './pages/Dashboard';
 import Fleet from './pages/Fleet';
 import Loads from './pages/Loads';
@@ -24,6 +23,11 @@ import Disruptions from './pages/Disruptions';
 import Settings from './pages/Settings';
 import Analytics from './pages/Analytics';
 import DataManagement from './pages/DataManagement';
+import Team from './pages/Team';
+import MyTrips from './pages/MyTrips';
+import MyOrders from './pages/MyOrders';
+import Login from './pages/auth/Login';
+import RequireRole from './auth/RequireRole';
 import { AuthProvider } from './context/AuthContext';
 
 function AppContent() {
@@ -258,14 +262,24 @@ function AppContent() {
       {/* 3. Main Multi-Page Body */}
       <main className="flex-1 max-w-[1680px] w-full mx-auto p-4 sm:p-6 lg:p-8">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/fleet" element={<Fleet />} />
-          <Route path="/loads" element={<Loads />} />
-          <Route path="/assignments" element={<Assignments />} />
-          <Route path="/disruptions" element={<Disruptions />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/data" element={<DataManagement />} />
+          {/* Public Authentication Route */}
+          <Route path="/login" element={<Login />} />
+
+          {/* Operational Planner Routes */}
+          <Route path="/" element={<RequireRole roles={['planner']}><Dashboard /></RequireRole>} />
+          <Route path="/fleet" element={<RequireRole roles={['planner']}><Fleet /></RequireRole>} />
+          <Route path="/loads" element={<RequireRole roles={['planner']}><Loads /></RequireRole>} />
+          <Route path="/assignments" element={<RequireRole roles={['planner']}><Assignments /></RequireRole>} />
+          <Route path="/disruptions" element={<RequireRole roles={['planner']}><Disruptions /></RequireRole>} />
+          <Route path="/analytics" element={<RequireRole roles={['planner']}><Analytics /></RequireRole>} />
+          <Route path="/team" element={<RequireRole roles={['planner']}><Team /></RequireRole>} />
+          <Route path="/settings" element={<RequireRole roles={['planner']}><Settings /></RequireRole>} />
+          <Route path="/data" element={<RequireRole roles={['planner']}><DataManagement /></RequireRole>} />
+
+          {/* Driver & Buyer Dedicated Portals */}
+          <Route path="/my-trips" element={<RequireRole roles={['driver', 'planner']}><MyTrips /></RequireRole>} />
+          <Route path="/my-orders" element={<RequireRole roles={['buyer', 'planner']}><MyOrders /></RequireRole>} />
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

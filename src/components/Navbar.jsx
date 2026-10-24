@@ -1,5 +1,5 @@
 // Logistics Twin - Navigation Bar
-// Top navigation tabs connecting all system pages
+// Role-based top navigation tabs connecting all system pages with demo continuity.
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
@@ -12,26 +12,52 @@ import {
   Leaf,
   Sliders,
   Database,
-  Smartphone,
-  ShieldCheck,
+  Users,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useReRoute } from '../context/ReRouteContext';
-const NAV_ITEMS = [
+
+const PLANNER_NAV_ITEMS = [
   { path: '/', label: 'Supply Network', icon: LayoutDashboard },
   { path: '/disruptions', label: 'Problem Simulator', icon: Zap },
   { path: '/assignments', label: 'Recovery Plan', icon: Layers },
   { path: '/fleet', label: 'Fleet & Dispatch', icon: Truck },
   { path: '/loads', label: 'Loads Pool', icon: Package },
   { path: '/analytics', label: 'Resilience Analytics', icon: Leaf },
+  { path: '/team', label: 'Team', icon: Users },
   { path: '/settings', label: 'Settings', icon: Sliders },
   { path: '/data', label: 'Data Management', icon: Database },
 ];
 
 export default function Navbar() {
+  const { role, isDemoUser } = useAuth();
   const { isJudgeMode } = useReRoute();
-  const visibleItems = isJudgeMode
-    ? NAV_ITEMS.filter((item) => item.path !== '/settings' && item.path !== '/data')
-    : NAV_ITEMS;
+
+  let visibleItems = [];
+
+  if (role === 'driver') {
+    visibleItems = [
+      { path: '/my-trips', label: 'My Assigned Trips', icon: Truck },
+    ];
+  } else if (role === 'buyer') {
+    visibleItems = [
+      { path: '/my-orders', label: 'My Consignment Orders', icon: Package },
+    ];
+  } else {
+    // Planner
+    visibleItems = isJudgeMode
+      ? PLANNER_NAV_ITEMS.filter((item) => item.path !== '/settings' && item.path !== '/data')
+      : PLANNER_NAV_ITEMS;
+
+    // In demo mode, also allow planners to easily preview Driver and Buyer views
+    if (isDemoUser) {
+      visibleItems = [
+        ...visibleItems,
+        { path: '/my-trips', label: 'Driver View', icon: Truck },
+        { path: '/my-orders', label: 'Buyer View', icon: Package },
+      ];
+    }
+  }
 
   return (
     <nav className="bg-white border-b border-[#E2E8F0] shadow-xs w-full overflow-hidden">
