@@ -13,6 +13,7 @@ import {
   Sliders,
   Database,
   Users,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useReRoute } from '../context/ReRouteContext';
@@ -24,6 +25,7 @@ const PLANNER_NAV_ITEMS = [
   { path: '/fleet', label: 'Fleet & Dispatch', icon: Truck },
   { path: '/loads', label: 'Loads Pool', icon: Package },
   { path: '/analytics', label: 'Resilience Analytics', icon: Leaf },
+  { path: '/pricing', label: 'Pricing', icon: Sparkles },
   { path: '/team', label: 'Team', icon: Users },
   { path: '/settings', label: 'Settings', icon: Sliders },
   { path: '/data', label: 'Data Management', icon: Database },
@@ -38,10 +40,12 @@ export default function Navbar() {
   if (role === 'driver') {
     visibleItems = [
       { path: '/my-trips', label: 'My Assigned Trips', icon: Truck },
+      { path: '/pricing', label: 'Pricing', icon: Sparkles },
     ];
   } else if (role === 'buyer') {
     visibleItems = [
       { path: '/my-orders', label: 'My Consignment Orders', icon: Package },
+      { path: '/pricing', label: 'Pricing', icon: Sparkles },
     ];
   } else {
     // Planner

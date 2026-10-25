@@ -2,13 +2,16 @@
 // Multi-attribute weight tuning with auto-normalization and live +/-10 pt sensitivity matrix.
 
 import React, { useState, useMemo } from 'react';
-import { Sliders, CheckCircle2, RotateCcw, Activity, ShieldCheck, Info, CloudRain } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Sliders, CheckCircle2, RotateCcw, Activity, ShieldCheck, Info, CloudRain, Sparkles } from 'lucide-react';
 import { useReRoute } from '../context/ReRouteContext';
+import { usePlan } from '../lib/plan';
 import { normalizeWeights, evaluateShipments, DEFAULT_WEATHER_PENALTIES } from '../engine/index';
 import { FACTOR_WEIGHTS } from '../data/mockData';
 
 export default function Settings() {
   const { settings, updateSettings, trucks, shipments } = useReRoute();
+  const { status: planStatus, isTrial, daysLeft, resetPlan } = usePlan();
   const [weights, setWeights] = useState(settings?.weights || FACTOR_WEIGHTS);
   const [speedKmH, setSpeedKmH] = useState(settings?.speedKmH || 45);
   const [maxDetourKm, setMaxDetourKm] = useState(settings?.maxDetourKm || 80);
@@ -378,6 +381,28 @@ export default function Settings() {
               "Robust" indicates the top pick remains optimal even if weight fluctuates by 10%.
               "Sensitive" signals where dispatcher operational priorities alter the dispatch decision.
             </p>
+          </div>
+
+          <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs text-[#64748B]">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+              <span>Subscription Plan: <strong className="text-slate-800 capitalize">{planStatus}</strong> {isTrial ? `(${daysLeft}d left)` : ''}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Link to="/pricing" className="text-blue-600 hover:underline font-semibold">Pricing details</Link>
+              <span>•</span>
+              <button
+                type="button"
+                onClick={() => {
+                  resetPlan();
+                  setIsSaved(true);
+                  setTimeout(() => setIsSaved(false), 2500);
+                }}
+                className="text-purple-600 hover:underline font-semibold cursor-pointer"
+              >
+                Reset plan (demo)
+              </button>
+            </div>
           </div>
         </div>
       </div>

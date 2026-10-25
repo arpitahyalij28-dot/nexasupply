@@ -2,8 +2,10 @@
 // CSV Export, JSON system backup, Load Demo Data, and Clear All Data.
 
 import React, { useState } from 'react';
-import { Database, Download, Sparkles, Trash2, FileText, CheckCircle2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Database, Download, Sparkles, Trash2, FileText, CheckCircle2, RotateCcw } from 'lucide-react';
 import { useReRoute } from '../context/ReRouteContext';
+import { usePlan } from '../lib/plan';
 
 export default function DataManagement() {
   const {
@@ -14,6 +16,7 @@ export default function DataManagement() {
     setIsClearConfirmOpen,
   } = useReRoute();
 
+  const { status, isTrial, isPro, isExpired, daysLeft, resetPlan } = usePlan();
   const [statusMessage, setStatusMessage] = useState(null);
 
   // CSV Export for Trucks
@@ -122,6 +125,55 @@ export default function DataManagement() {
           <span>{statusMessage}</span>
         </div>
       )}
+
+      {/* Subscription & Free Trial Simulation Card */}
+      <div className="bg-white rounded-[12px] border border-[#E2E8F0] shadow-soft p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-700 border border-purple-200 flex items-center justify-center font-bold shrink-0">
+              <Sparkles className="w-5 h-5 text-purple-600" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-bold text-[#0F172A]">Logistics Twin Pro Subscription</h3>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                  Demo Simulation
+                </span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  isPro ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                  isExpired ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                  isTrial ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                  'bg-slate-50 text-slate-700 border-slate-200'
+                }`}>
+                  Status: {status.toUpperCase()} {isTrial ? `(${daysLeft} days left)` : ''}
+                </span>
+              </div>
+              <p className="text-xs text-[#64748B] mt-0.5">
+                Pro plan simulated billing (Rs 4,999/month, 30-day trial). Evaluators can restart or reset the trial cycle anytime.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/pricing"
+              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 transition-colors"
+            >
+              View Pricing Page
+            </Link>
+            <button
+              onClick={() => {
+                resetPlan();
+                setStatusMessage('Subscription & Free Trial simulation reset to default state.');
+              }}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Reset plan (demo)"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset plan (demo)</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* 3 Main Action Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
