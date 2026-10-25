@@ -1,6 +1,7 @@
 // Logistics Twin - Core Data Context & Persistence Provider
-// Starts completely EMPTY by default. Hydrates from localStorage.
-// Demo data is loaded ONLY on explicit user action ("Load Demo Data").
+// Track 3-05: Disruption-Aware Logistics Twin for Regional Supply Networks
+// Integrates with twinRepository (LocalAdapter + SupabaseAdapter), Realtime sync,
+// offline write queue with auto-replay, optimistic updates, and Zod validation.
 
 import React, {
   createContext,
@@ -9,6 +10,7 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
 } from 'react';
 import { DEMO_DATA } from '../data/mockData';
 import { getCityCoords, calculateDistanceKm } from '../data/cities';
@@ -25,6 +27,13 @@ import {
   DEFAULT_DISRUPTIONS,
   applyDisruptionScenario,
 } from '../engine/disruptions.js';
+import {
+  createTwinRepository,
+  exportNetworkJson,
+  importNetworkJson,
+  validateEntity,
+} from '../data/twinRepository.js';
+import { useAuth } from './AuthContext.jsx';
 
 export const DataContext = createContext(null);
 
@@ -37,6 +46,7 @@ const STORAGE_KEYS = {
   IS_DEMO: 'logistics_twin_is_demo',
   DISRUPTIONS_CONFIG: 'logistics_twin_disruptions_config',
   SIMULATED_SCENARIO: 'logistics_twin_simulated_scenario',
+  OFFLINE_QUEUE: 'logistics_twin_offline_queue',
 };
 
 function getStoredJson(key, fallback) {
@@ -49,7 +59,6 @@ function getStoredJson(key, fallback) {
   }
 }
 
-// Safe localStorage readers that start EMPTY if no user data has been saved
 function getStoredArray(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -71,7 +80,21 @@ function getStoredString(key) {
 }
 
 export function DataProvider({ children }) {
-  // 1. Initial State: Starts EMPTY unless hydrated from localStorage
+  // Safe access to Auth context (handles tests where DataProvider might be rendered standalone)
+  let auth = {};
+  try {
+    auth = useAuth() || {};
+  } catch {
+    auth = { user: null, profile: null, isDemoUser: true };
+  }
+  const { user = null, profile = null, isDemoUser = true } = auth;
+
+  // Active twin data repository (LocalAdapter or SupabaseAdapter)
+  const repository = useMemo(() => {
+    return createTwinRepository({ user, profile, forceLocal: isDemoUser });
+  }, [user, profile, isDemoUser]);
+
+  // 1. Initial State
   const [trucks, setTrucks] = useState(() => getStoredArray(STORAGE_KEYS.TRUCKS));
   const [shipments, setShipments] = useState(() => getStoredArray(STORAGE_KEYS.SHIPMENTS));
   const [selectedTruckId, setSelectedTruckIdState] = useState(() =>
@@ -89,6 +112,7 @@ export function DataProvider({ children }) {
     }
     return getDemoNetwork();
   });
+
   const [isDemoData, setIsDemoData] = useState(() => {
     const val = localStorage.getItem(STORAGE_KEYS.IS_DEMO);
     return val !== null ? val === 'true' : true;
@@ -99,12 +123,15 @@ export function DataProvider({ children }) {
     return getStoredJson(STORAGE_KEYS.DISRUPTIONS_CONFIG, DEFAULT_DISRUPTIONS);
   });
   const [scenarioResult, setScenarioResult] = useState(() => {
-    const stored = getStoredJson(STORAGE_KEYS.SIMULATED_SCENARIO, null);
-    if (stored) return stored;
-    return null;
+    return getStoredJson(STORAGE_KEYS.SIMULATED_SCENARIO, null);
   });
 
-  // UI Modal States for adding/editing data
+  // Offline Sync Queue State
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [offlineQueue, setOfflineQueue] = useState(() => getStoredArray(STORAGE_KEYS.OFFLINE_QUEUE));
+  const [concurrencyNotice, setConcurrencyNotice] = useState(null);
+
+  // UI Modal States
   const [isAddTruckOpen, setIsAddTruckOpen] = useState(false);
   const [isAddShipmentOpen, setIsAddShipmentOpen] = useState(false);
   const [editingTruck, setEditingTruck] = useState(null);
@@ -126,7 +153,117 @@ export function DataProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // 2. LocalStorage Persistence
+  // Online / Offline Listeners
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast('Back online! Syncing queued updates...', 'success');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast('You are offline. Edits will be saved locally and synced when reconnected.', 'info');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [showToast]);
+
+  // Load Network from Repository on Mount or Repository Swap
+  useEffect(() => {
+    let isCancelled = false;
+    async function initNetwork() {
+      try {
+        const net = await repository.loadNetwork();
+        if (!isCancelled && net) {
+          setNetwork(net);
+        }
+      } catch (err) {
+        console.warn('[DataProvider] Initial network load fallback:', err.message);
+      }
+    }
+    initNetwork();
+    return () => {
+      isCancelled = true;
+    };
+  }, [repository]);
+
+  // Realtime Subscription with Polling Fallback
+  useEffect(() => {
+    const unsubscribe = repository.subscribe((event) => {
+      if (event.type === 'REALTIME_CHANGE' || event.type === 'POLL_SYNC' || event.type === 'STORAGE_SYNC') {
+        repository
+          .loadNetwork()
+          .then((remoteNet) => {
+            if (remoteNet) {
+              setNetwork(remoteNet);
+            }
+          })
+          .catch(() => {});
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [repository]);
+
+  // Offline Queue Worker: Auto-replay queued writes when online
+  const replayOfflineQueue = useCallback(async () => {
+    if (!isOnline || offlineQueue.length === 0) return;
+
+    const remaining = [...offlineQueue];
+    let syncedCount = 0;
+
+    while (remaining.length > 0) {
+      const item = remaining[0];
+      try {
+        if (item.action === 'saveEntity') {
+          await repository.saveEntity(item.type, item.entity);
+        } else if (item.action === 'deleteEntity') {
+          await repository.deleteEntity(item.type, item.id);
+        }
+        remaining.shift();
+        syncedCount++;
+      } catch (err) {
+        console.error('[OfflineQueue] Sync error on item:', item, err);
+        break;
+      }
+    }
+
+    setOfflineQueue(remaining);
+    try {
+      localStorage.setItem(STORAGE_KEYS.OFFLINE_QUEUE, JSON.stringify(remaining));
+    } catch {}
+
+    if (syncedCount > 0) {
+      showToast(`Successfully synced ${syncedCount} queued change(s) with cloud`, 'success');
+    }
+  }, [isOnline, offlineQueue, repository, showToast]);
+
+  useEffect(() => {
+    if (isOnline && offlineQueue.length > 0) {
+      replayOfflineQueue();
+    }
+  }, [isOnline, offlineQueue.length, replayOfflineQueue]);
+
+  // Offline Write Queuer Helper
+  const enqueueOfflineAction = useCallback((actionItem) => {
+    setOfflineQueue((prev) => {
+      const updated = [...prev, actionItem];
+      try {
+        localStorage.setItem(STORAGE_KEYS.OFFLINE_QUEUE, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  }, []);
+
+  // 2. LocalStorage Persistence for UI convenience
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.NETWORK, JSON.stringify(network));
@@ -141,7 +278,6 @@ export function DataProvider({ children }) {
     } catch {}
   }, [isDemoData]);
 
-  // 2. LocalStorage Persistence
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.TRUCKS, JSON.stringify(trucks));
@@ -178,7 +314,6 @@ export function DataProvider({ children }) {
     } catch {}
   }, [selectedShipmentId]);
 
-  // Keep selection synchronized with current truck/shipment lists
   useEffect(() => {
     if (trucks.length > 0) {
       if (!selectedTruckId || !trucks.some((t) => t.id === selectedTruckId)) {
@@ -207,16 +342,367 @@ export function DataProvider({ children }) {
     setSelectedShipmentIdState(id);
   }, []);
 
-  // 3. Actions: Add, Update, Delete Trucks
+  // Generic Optimistic Entity Saver with Zod Validation & Rollback
+  const performSaveEntity = useCallback(
+    async (type, entity, pluralKey) => {
+      // 1. Zod Validation
+      try {
+        validateEntity(type, entity);
+      } catch (validationErr) {
+        showToast(validationErr.message, 'error');
+        throw validationErr;
+      }
+
+      // 2. Optimistic React State Update
+      const previousState = network;
+      setNetwork((prev) => {
+        const currentItems = Array.isArray(prev[pluralKey]) ? prev[pluralKey] : [];
+        const index = currentItems.findIndex((x) => x.id === entity.id);
+        const updatedItems =
+          index >= 0
+            ? currentItems.map((item, idx) => (idx === index ? { ...item, ...entity } : item))
+            : [{ ...entity }, ...currentItems];
+        return { ...prev, [pluralKey]: updatedItems };
+      });
+      setIsDemoData(false);
+
+      // 3. Persistent Save via Repository / Offline Queue
+      try {
+        if (!isOnline && !isDemoUser) {
+          enqueueOfflineAction({ action: 'saveEntity', type, entity });
+          showToast(`Saved locally on device (offline). Will sync to cloud.`, 'info');
+        } else {
+          await repository.saveEntity(type, entity);
+          showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} saved`, 'success');
+        }
+      } catch (err) {
+        // Rollback on failure
+        setNetwork(previousState);
+        showToast(`Failed to save ${type}: ${err.message}`, 'error');
+        throw err;
+      }
+    },
+    [network, isOnline, isDemoUser, enqueueOfflineAction, repository, showToast]
+  );
+
+  // Generic Optimistic Entity Deleter with Rollback
+  const performDeleteEntity = useCallback(
+    async (type, id, pluralKey) => {
+      const previousState = network;
+      setNetwork((prev) => ({
+        ...prev,
+        [pluralKey]: (prev[pluralKey] || []).filter((item) => item.id !== id),
+      }));
+      setIsDemoData(false);
+
+      try {
+        if (!isOnline && !isDemoUser) {
+          enqueueOfflineAction({ action: 'deleteEntity', type, id });
+          showToast(`Marked for deletion locally. Will sync to cloud.`, 'info');
+        } else {
+          await repository.deleteEntity(type, id);
+          showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted`, 'info');
+        }
+      } catch (err) {
+        setNetwork(previousState);
+        showToast(`Failed to delete ${type}: ${err.message}`, 'error');
+        throw err;
+      }
+    },
+    [network, isOnline, isDemoUser, enqueueOfflineAction, repository, showToast]
+  );
+
+  // Network Entity CRUD Handlers (Track 3-05 Logistics Twin)
+  const addSupplier = useCallback(
+    (supInput) => {
+      const s = createSupplier(supInput);
+      performSaveEntity('supplier', s, 'suppliers');
+      return s;
+    },
+    [performSaveEntity]
+  );
+
+  const updateSupplier = useCallback(
+    (id, patch) => {
+      const existing = (network.suppliers || []).find((s) => s.id === id);
+      if (existing) {
+        const merged = { ...existing, ...patch };
+        performSaveEntity('supplier', merged, 'suppliers');
+      }
+    },
+    [network.suppliers, performSaveEntity]
+  );
+
+  const deleteSupplier = useCallback(
+    (id) => {
+      performDeleteEntity('supplier', id, 'suppliers');
+    },
+    [performDeleteEntity]
+  );
+
+  const addWarehouse = useCallback(
+    (whInput) => {
+      const w = createWarehouse(whInput);
+      performSaveEntity('warehouse', w, 'warehouses');
+      return w;
+    },
+    [performSaveEntity]
+  );
+
+  const updateWarehouse = useCallback(
+    (id, patch) => {
+      const existing = (network.warehouses || []).find((w) => w.id === id);
+      if (existing) {
+        const merged = { ...existing, ...patch };
+        performSaveEntity('warehouse', merged, 'warehouses');
+      }
+    },
+    [network.warehouses, performSaveEntity]
+  );
+
+  const deleteWarehouse = useCallback(
+    (id) => {
+      performDeleteEntity('warehouse', id, 'warehouses');
+    },
+    [performDeleteEntity]
+  );
+
+  const addBuyer = useCallback(
+    (buyerInput) => {
+      const b = createBuyer(buyerInput);
+      performSaveEntity('buyer', b, 'buyers');
+      return b;
+    },
+    [performSaveEntity]
+  );
+
+  const updateBuyer = useCallback(
+    (id, patch) => {
+      const existing = (network.buyers || []).find((b) => b.id === id);
+      if (existing) {
+        const merged = { ...existing, ...patch };
+        performSaveEntity('buyer', merged, 'buyers');
+      }
+    },
+    [network.buyers, performSaveEntity]
+  );
+
+  const deleteBuyer = useCallback(
+    (id) => {
+      performDeleteEntity('buyer', id, 'buyers');
+    },
+    [performDeleteEntity]
+  );
+
+  const addRoute = useCallback(
+    (routeInput) => {
+      const r = createRoute(routeInput);
+      performSaveEntity('route', r, 'routes');
+      return r;
+    },
+    [performSaveEntity]
+  );
+
+  const updateRoute = useCallback(
+    (id, patch) => {
+      const existing = (network.routes || []).find((r) => r.id === id);
+      if (existing) {
+        const merged = { ...existing, ...patch };
+        performSaveEntity('route', merged, 'routes');
+      }
+    },
+    [network.routes, performSaveEntity]
+  );
+
+  const deleteRoute = useCallback(
+    (id) => {
+      performDeleteEntity('route', id, 'routes');
+    },
+    [performDeleteEntity]
+  );
+
+  const addVehicle = useCallback(
+    (vehInput) => {
+      const v = createVehicle(vehInput);
+      performSaveEntity('vehicle', v, 'vehicles');
+      return v;
+    },
+    [performSaveEntity]
+  );
+
+  const updateVehicle = useCallback(
+    (id, patch) => {
+      const existing = (network.vehicles || []).find((v) => v.id === id);
+      if (existing) {
+        const merged = { ...existing, ...patch };
+        performSaveEntity('vehicle', merged, 'vehicles');
+      }
+    },
+    [network.vehicles, performSaveEntity]
+  );
+
+  const deleteVehicle = useCallback(
+    (id) => {
+      performDeleteEntity('vehicle', id, 'vehicles');
+    },
+    [performDeleteEntity]
+  );
+
+  const updateScenarioSettings = useCallback(
+    (settingsPatch) => {
+      setNetwork((prev) => ({
+        ...prev,
+        settings: {
+          ...(prev.settings || createScenarioSettings()),
+          ...settingsPatch,
+          weights: {
+            ...(prev.settings?.weights || {}),
+            ...(settingsPatch.weights || {}),
+          },
+        },
+      }));
+      showToast(`Scenario settings updated`, 'info');
+    },
+    [showToast]
+  );
+
+  // Disruption Simulation Actions
+  const applyDisruptions = useCallback(
+    (config) => {
+      const res = applyDisruptionScenario(network, config);
+      setDisruptionsConfig(config);
+      setScenarioResult(res);
+      try {
+        localStorage.setItem(STORAGE_KEYS.DISRUPTIONS_CONFIG, JSON.stringify(config));
+        localStorage.setItem(STORAGE_KEYS.SIMULATED_SCENARIO, JSON.stringify(res));
+      } catch {}
+      repository.saveScenario(config).catch(() => {});
+      showToast('Disruption scenario applied to network copy', 'info');
+      return res;
+    },
+    [network, repository, showToast]
+  );
+
+  const clearDisruptions = useCallback(() => {
+    setDisruptionsConfig(DEFAULT_DISRUPTIONS);
+    setScenarioResult(null);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.DISRUPTIONS_CONFIG);
+      localStorage.removeItem(STORAGE_KEYS.SIMULATED_SCENARIO);
+    } catch {}
+    showToast('Simulation cleared. Baseline network restored.', 'success');
+  }, [showToast]);
+
+  // Network JSON Import & Export
+  const exportNetwork = useCallback(() => {
+    try {
+      const jsonStr = exportNetworkJson(network);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `logistics-twin-network-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Network JSON exported successfully', 'success');
+      return jsonStr;
+    } catch (err) {
+      showToast(`Export failed: ${err.message}`, 'error');
+      return null;
+    }
+  }, [network, showToast]);
+
+  const importNetwork = useCallback(
+    (jsonString) => {
+      try {
+        const validated = importNetworkJson(jsonString);
+        setNetwork(validated);
+        setIsDemoData(false);
+        showToast('Network JSON successfully imported and validated', 'success');
+        return { success: true, data: validated };
+      } catch (err) {
+        showToast(err.message, 'error');
+        return { success: false, error: err.message };
+      }
+    },
+    [showToast]
+  );
+
+  // Demo & Reset Handlers
+  const loadDemoData = useCallback(
+    (mode = 'replace') => {
+      const demoTrucks = JSON.parse(JSON.stringify(DEMO_DATA.trucks));
+      const demoShipments = JSON.parse(JSON.stringify(DEMO_DATA.shipments));
+      const demoNet = getDemoNetwork();
+
+      if (mode === 'merge') {
+        setTrucks((curr) => {
+          const existingIds = new Set(curr.map((t) => t.id));
+          const newOnes = demoTrucks.filter((t) => !existingIds.has(t.id));
+          return [...curr, ...newOnes];
+        });
+        setShipments((curr) => {
+          const existingIds = new Set(curr.map((s) => s.id));
+          const newOnes = demoShipments.filter((s) => !existingIds.has(s.id));
+          return [...curr, ...newOnes];
+        });
+        setNetwork(demoNet);
+        setIsDemoData(true);
+        showToast('Demo network and fleet data merged', 'success');
+      } else {
+        setTrucks(demoTrucks);
+        setShipments(demoShipments);
+        setSelectedTruckIdState(demoTrucks[0]?.id || 'T101');
+        setSelectedShipmentIdState(demoShipments[0]?.id || 'S1');
+        setNetwork(demoNet);
+        setIsDemoData(true);
+        repository.resetDemoNetwork().catch(() => {});
+        showToast('Demo Logistics Twin network restored', 'success');
+      }
+    },
+    [repository, showToast]
+  );
+
+  const clearAllData = useCallback(() => {
+    setTrucks([]);
+    setShipments([]);
+    setSelectedTruckIdState(null);
+    setSelectedShipmentIdState(null);
+    setNetwork({
+      metadata: null,
+      suppliers: [],
+      warehouses: [],
+      buyers: [],
+      routes: [],
+      vehicles: [],
+      settings: createScenarioSettings(),
+    });
+    setIsDemoData(false);
+    clearDisruptions();
+
+    try {
+      localStorage.removeItem(STORAGE_KEYS.TRUCKS);
+      localStorage.removeItem(STORAGE_KEYS.SHIPMENTS);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_TRUCK);
+      localStorage.removeItem(STORAGE_KEYS.SELECTED_SHIPMENT);
+      localStorage.removeItem(STORAGE_KEYS.NETWORK);
+      localStorage.removeItem(STORAGE_KEYS.IS_DEMO);
+      localStorage.removeItem(STORAGE_KEYS.OFFLINE_QUEUE);
+      localStorage.removeItem('reroute_demo_trucks');
+      localStorage.removeItem('reroute_demo_shipments');
+      localStorage.removeItem('reroute_demo_assignments');
+    } catch {}
+
+    showToast('All supply network data cleared. Starting fresh.', 'info');
+  }, [clearDisruptions, showToast]);
+
+  // Legacy Fleet / Consignments for continuity
   const addTruck = useCallback((truckInput) => {
     const originCoords = truckInput.originCoords || getCityCoords(truckInput.origin);
     const destinationCoords = truckInput.destinationCoords || getCityCoords(truckInput.destination);
-
-    // Midpoint or origin for current vehicle position
     const currentLat = (originCoords[0] + destinationCoords[0]) / 2;
     const currentLng = (originCoords[1] + destinationCoords[1]) / 2;
     const currentCoords = truckInput.currentCoords || [currentLat, currentLng];
-
     const totalKm = calculateDistanceKm(originCoords, destinationCoords);
     const capacityTons = Number(truckInput.capacityTons || 10);
     const currentLoadTons = Number(truckInput.currentLoadTons ?? capacityTons);
@@ -283,13 +769,11 @@ export function DataProvider({ children }) {
     showToast(`Vehicle ${id} removed from fleet`, 'info');
   }, [showToast]);
 
-  // 4. Actions: Add, Update, Delete Shipments
   const addShipment = useCallback((shipmentInput) => {
     const originCoords = shipmentInput.originCoords || getCityCoords(shipmentInput.origin || shipmentInput.pickupCity);
     const destCoords = shipmentInput.destCoords || getCityCoords(shipmentInput.destination || shipmentInput.dropCity);
     const weightTons = Number(shipmentInput.weightTons || shipmentInput.weight || 8);
     const freightOfferInr = Number(shipmentInput.freightOfferInr || shipmentInput.freightRate || shipmentInput.value || 25000);
-
     const newId = shipmentInput.id || `S${Date.now().toString().slice(-4)}`;
 
     const newShipment = {
@@ -355,257 +839,6 @@ export function DataProvider({ children }) {
     showToast(`Consignment ${id} removed`, 'info');
   }, [showToast]);
 
-  // Network Entity CRUD Handlers (Track 3-05 Logistics Twin)
-  const addSupplier = useCallback((supInput) => {
-    const s = createSupplier(supInput);
-    setNetwork((prev) => ({
-      ...prev,
-      suppliers: [s, ...(prev.suppliers || [])],
-    }));
-    setIsDemoData(false);
-    showToast(`Supplier ${s.name} added`, 'success');
-    return s;
-  }, [showToast]);
-
-  const updateSupplier = useCallback((id, patch) => {
-    setNetwork((prev) => ({
-      ...prev,
-      suppliers: (prev.suppliers || []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
-    }));
-    setIsDemoData(false);
-    showToast(`Supplier updated`, 'info');
-  }, [showToast]);
-
-  const deleteSupplier = useCallback((id) => {
-    setNetwork((prev) => ({
-      ...prev,
-      suppliers: (prev.suppliers || []).filter((s) => s.id !== id),
-    }));
-    setIsDemoData(false);
-    showToast(`Supplier removed`, 'info');
-  }, [showToast]);
-
-  const addWarehouse = useCallback((whInput) => {
-    const w = createWarehouse(whInput);
-    setNetwork((prev) => ({
-      ...prev,
-      warehouses: [w, ...(prev.warehouses || [])],
-    }));
-    setIsDemoData(false);
-    showToast(`Warehouse ${w.name} added`, 'success');
-    return w;
-  }, [showToast]);
-
-  const updateWarehouse = useCallback((id, patch) => {
-    setNetwork((prev) => ({
-      ...prev,
-      warehouses: (prev.warehouses || []).map((w) => (w.id === id ? { ...w, ...patch } : w)),
-    }));
-    setIsDemoData(false);
-    showToast(`Warehouse updated`, 'info');
-  }, [showToast]);
-
-  const deleteWarehouse = useCallback((id) => {
-    setNetwork((prev) => ({
-      ...prev,
-      warehouses: (prev.warehouses || []).filter((w) => w.id !== id),
-    }));
-    setIsDemoData(false);
-    showToast(`Warehouse removed`, 'info');
-  }, [showToast]);
-
-  const addBuyer = useCallback((buyerInput) => {
-    const b = createBuyer(buyerInput);
-    setNetwork((prev) => ({
-      ...prev,
-      buyers: [b, ...(prev.buyers || [])],
-    }));
-    setIsDemoData(false);
-    showToast(`Buyer ${b.name} added`, 'success');
-    return b;
-  }, [showToast]);
-
-  const updateBuyer = useCallback((id, patch) => {
-    setNetwork((prev) => ({
-      ...prev,
-      buyers: (prev.buyers || []).map((b) => (b.id === id ? { ...b, ...patch } : b)),
-    }));
-    setIsDemoData(false);
-    showToast(`Buyer updated`, 'info');
-  }, [showToast]);
-
-  const deleteBuyer = useCallback((id) => {
-    setNetwork((prev) => ({
-      ...prev,
-      buyers: (prev.buyers || []).filter((b) => b.id !== id),
-    }));
-    setIsDemoData(false);
-    showToast(`Buyer removed`, 'info');
-  }, [showToast]);
-
-  const addRoute = useCallback((routeInput) => {
-    const r = createRoute(routeInput);
-    setNetwork((prev) => ({
-      ...prev,
-      routes: [r, ...(prev.routes || [])],
-    }));
-    setIsDemoData(false);
-    showToast(`Route added: ${r.name}`, 'success');
-    return r;
-  }, [showToast]);
-
-  const updateRoute = useCallback((id, patch) => {
-    setNetwork((prev) => ({
-      ...prev,
-      routes: (prev.routes || []).map((r) => (r.id === id ? { ...r, ...patch } : r)),
-    }));
-    setIsDemoData(false);
-    showToast(`Route updated`, 'info');
-  }, [showToast]);
-
-  const deleteRoute = useCallback((id) => {
-    setNetwork((prev) => ({
-      ...prev,
-      routes: (prev.routes || []).filter((r) => r.id !== id),
-    }));
-    setIsDemoData(false);
-    showToast(`Route removed`, 'info');
-  }, [showToast]);
-
-  const addVehicle = useCallback((vehInput) => {
-    const v = createVehicle(vehInput);
-    setNetwork((prev) => ({
-      ...prev,
-      vehicles: [v, ...(prev.vehicles || [])],
-    }));
-    setIsDemoData(false);
-    showToast(`Vehicle ${v.id} added`, 'success');
-    return v;
-  }, [showToast]);
-
-  const updateVehicle = useCallback((id, patch) => {
-    setNetwork((prev) => ({
-      ...prev,
-      vehicles: (prev.vehicles || []).map((v) => (v.id === id ? { ...v, ...patch } : v)),
-    }));
-    setIsDemoData(false);
-    showToast(`Vehicle updated`, 'info');
-  }, [showToast]);
-
-  const deleteVehicle = useCallback((id) => {
-    setNetwork((prev) => ({
-      ...prev,
-      vehicles: (prev.vehicles || []).filter((v) => v.id !== id),
-    }));
-    setIsDemoData(false);
-    showToast(`Vehicle removed`, 'info');
-  }, [showToast]);
-
-  const updateScenarioSettings = useCallback((settingsPatch) => {
-    setNetwork((prev) => ({
-      ...prev,
-      settings: {
-        ...(prev.settings || createScenarioSettings()),
-        ...settingsPatch,
-        weights: {
-          ...(prev.settings?.weights || {}),
-          ...(settingsPatch.weights || {}),
-        },
-      },
-    }));
-    showToast(`Scenario settings updated`, 'info');
-  }, [showToast]);
-
-  // 5. Actions: Load Demo Data & Clear All Data
-  const loadDemoData = useCallback((mode = 'replace') => {
-    const demoTrucks = JSON.parse(JSON.stringify(DEMO_DATA.trucks));
-    const demoShipments = JSON.parse(JSON.stringify(DEMO_DATA.shipments));
-    const demoNet = getDemoNetwork();
-
-    if (mode === 'merge') {
-      setTrucks((curr) => {
-        const existingIds = new Set(curr.map((t) => t.id));
-        const newOnes = demoTrucks.filter((t) => !existingIds.has(t.id));
-        return [...curr, ...newOnes];
-      });
-      setShipments((curr) => {
-        const existingIds = new Set(curr.map((s) => s.id));
-        const newOnes = demoShipments.filter((s) => !existingIds.has(s.id));
-        return [...curr, ...newOnes];
-      });
-      setNetwork(demoNet);
-      setIsDemoData(true);
-      showToast('Demo network and fleet data merged', 'success');
-    } else {
-      // Replace Mode
-      setTrucks(demoTrucks);
-      setShipments(demoShipments);
-      setSelectedTruckIdState(demoTrucks[0]?.id || 'T101');
-      setSelectedShipmentIdState(demoShipments[0]?.id || 'S1');
-      setNetwork(demoNet);
-      setIsDemoData(true);
-      showToast('Demo Logistics Twin network restored', 'success');
-    }
-  }, [showToast]);
-
-  const applyDisruptions = useCallback(
-    (config) => {
-      const res = applyDisruptionScenario(network, config);
-      setDisruptionsConfig(config);
-      setScenarioResult(res);
-      try {
-        localStorage.setItem(STORAGE_KEYS.DISRUPTIONS_CONFIG, JSON.stringify(config));
-        localStorage.setItem(STORAGE_KEYS.SIMULATED_SCENARIO, JSON.stringify(res));
-      } catch {}
-      showToast('Disruption scenario applied to network copy', 'info');
-      return res;
-    },
-    [network, showToast]
-  );
-
-  const clearDisruptions = useCallback(() => {
-    setDisruptionsConfig(DEFAULT_DISRUPTIONS);
-    setScenarioResult(null);
-    try {
-      localStorage.removeItem(STORAGE_KEYS.DISRUPTIONS_CONFIG);
-      localStorage.removeItem(STORAGE_KEYS.SIMULATED_SCENARIO);
-    } catch {}
-    showToast('Simulation cleared. Baseline network restored.', 'success');
-  }, [showToast]);
-
-  const clearAllData = useCallback(() => {
-    setTrucks([]);
-    setShipments([]);
-    setSelectedTruckIdState(null);
-    setSelectedShipmentIdState(null);
-    setNetwork({
-      metadata: null,
-      suppliers: [],
-      warehouses: [],
-      buyers: [],
-      routes: [],
-      vehicles: [],
-      settings: createScenarioSettings(),
-    });
-    setIsDemoData(false);
-    clearDisruptions();
-
-    try {
-      localStorage.removeItem(STORAGE_KEYS.TRUCKS);
-      localStorage.removeItem(STORAGE_KEYS.SHIPMENTS);
-      localStorage.removeItem(STORAGE_KEYS.SELECTED_TRUCK);
-      localStorage.removeItem(STORAGE_KEYS.SELECTED_SHIPMENT);
-      localStorage.removeItem(STORAGE_KEYS.NETWORK);
-      localStorage.removeItem(STORAGE_KEYS.IS_DEMO);
-      localStorage.removeItem('reroute_demo_trucks');
-      localStorage.removeItem('reroute_demo_shipments');
-      localStorage.removeItem('reroute_demo_assignments');
-    } catch {}
-
-    showToast('All supply network data cleared. Starting fresh.', 'info');
-  }, [clearDisruptions, showToast]);
-
-  // Derived selected objects
   const selectedTruck = useMemo(() => {
     return trucks.find((t) => t.id === selectedTruckId) || trucks[0] || null;
   }, [trucks, selectedTruckId]);
@@ -614,7 +847,6 @@ export function DataProvider({ children }) {
     return shipments.find((s) => s.id === selectedShipmentId) || shipments[0] || null;
   }, [shipments, selectedShipmentId]);
 
-  // Request load demo data helper (checks if data already exists to ask replace vs merge)
   const handleRequestLoadDemo = useCallback(() => {
     if (trucks.length > 0 || shipments.length > 0 || (network.warehouses && network.warehouses.length > 0)) {
       setIsDemoPromptOpen(true);
@@ -624,7 +856,8 @@ export function DataProvider({ children }) {
   }, [trucks.length, shipments.length, network.warehouses, loadDemoData]);
 
   const value = {
-    // Network Digital Twin state (Track 3-05)
+    // Repository & Network Digital Twin state (Track 3-05)
+    repository,
     network,
     setNetwork,
     isDemoData,
@@ -645,6 +878,8 @@ export function DataProvider({ children }) {
     updateVehicle,
     deleteVehicle,
     updateScenarioSettings,
+    exportNetwork,
+    importNetwork,
 
     // Disruption Simulator (Track 3-05)
     disruptionsConfig,
@@ -653,6 +888,14 @@ export function DataProvider({ children }) {
     isScenarioSimulated: Boolean(scenarioResult?.isDisrupted),
     applyDisruptions,
     clearDisruptions,
+
+    // Offline Queue Telemetry & State
+    isOnline,
+    offlineQueue,
+    hasQueuedWrites: offlineQueue.length > 0,
+    offlineQueueCount: offlineQueue.length,
+    replayOfflineQueue,
+    concurrencyNotice,
 
     // Legacy Fleet / Consignments for continuity
     trucks,
@@ -691,7 +934,22 @@ export function DataProvider({ children }) {
     dismissToast,
   };
 
-  return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+  return (
+    <DataContext.Provider value={value}>
+      {children}
+      {/* Offline sync banner / chip if there are queued offline writes */}
+      {offlineQueue.length > 0 && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 left-4 z-50 flex items-center gap-2 bg-amber-500 text-slate-900 px-3 py-2 rounded-lg text-xs font-semibold shadow-lg border border-amber-600 animate-pulse"
+        >
+          <span className="w-2 h-2 rounded-full bg-slate-900 animate-ping" />
+          <span>Saved on this device ({offlineQueue.length} queued), will sync</span>
+        </div>
+      )}
+    </DataContext.Provider>
+  );
 }
 
 export function useDataContext() {

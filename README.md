@@ -19,8 +19,70 @@ Live Deployment: [https://nexasupply.vercel.app/](https://nexasupply.vercel.app/
 
 The system is designed with strict mathematical separation of concerns:
 1. **Pure ES Module Engine (`src/engine/*`)**: 100% deterministic, zero network calls, zero React imports. Runs in any browser or Node/Vitest test runner offline.
-2. **Interactive UI (`src/pages/*`, `src/components/*`)**: React 18 + Vite + Tailwind CSS + Leaflet map. Visualizes live supply topologies, problem simulations, multi-plan comparisons, and explainability cards.
-3. **Dual Persistence Layer (`src/data/repository.js`, `src/context/DataContext.jsx`)**: Automatically persists to browser `localStorage` in offline demo mode, with transparent fallback to multi-tenant Supabase PostgreSQL when credentials are provided.
+2. **Interactive UI (`src/pages/*`, `src/components/*`)**: React 18 + Vite + Tailwind CSS + Leaflet map. Includes dedicated Planner Dashboard, Driver Console (`/my-trips`), Buyer Portal (`/my-orders`), and Team Management (`/team`).
+3. **Dual Persistence Layer (`src/data/twinRepository.js`, `src/context/DataContext.jsx`)**: Automatically persists to browser `localStorage` in offline demo mode via `LocalAdapter`, with transparent fallback to multi-tenant Supabase PostgreSQL via `SupabaseAdapter`.
+4. **Serverless API Layer (`api/*`)**: Secure Vercel serverless endpoints with Supabase JWT verification, user-keyed rate limiting, and server-side engine plan computation.
+
+```text
++----------------------------------------------------------------------------------------------------+
+|                                    LOGISTICS TWIN COCKPIT (React 18)                              |
+|                                                                                                    |
+|   +--------------------------+    +--------------------------+    +----------------------------+   |
+|   |  PLANNER CONSOLE         |    |  DRIVER PORTAL (/my-trips)|    |  BUYER PORTAL (/my-orders) |   |
+|   |  - Network Editor & CRUD |    |  - Assigned Trips (48px) |    |  - Demand vs Inbound Units |   |
+|   |  - Disruption Simulator  |    |  - Status Transitions    |    |  - On-Time Fulfillment KPI |   |
+|   |  - Solve & Publish Plan  |    |  - Realtime Dispatches   |    |  - Driver ETA & Reasons    |   |
+|   |  - Team Admin & Invites  |    +--------------------------+    +----------------------------+   |
+|   +--------------------------+                                                                     |
+|                 │                                       ▲                         ▲                |
+|                 ▼                                       │                         │                |
+|   +─────────────────────────────────────────────────────┴─────────────────────────┴─────────────+   |
+|   │                        DATA LAYER & AUTH LAYER (Dual-Mode)                                 │   |
+|   │  - AuthProvider (Supabase JWT / Demo Persona Switcher: Planner, Driver, Buyer)             │   |
+|   │  - TwinRepository: LocalAdapter (Offline Sandbox) <-> SupabaseAdapter (Cloud Sync)         │   |
+|   │  - Optimistic updates with auto-rollback, offline write queue with auto-replay             │   |
+|   │  - Supabase Realtime client (org-filtered channels with 15s fallback polling)              │   |
+|   +────────────────────────────────────────────────────────────────────────────────────────────+   |
++─────────────────────────────────┬───────────────────────────────────┬──────────────────────────────+
+                                  │ (Cloud Mode)                      │ (Client Evaluation)
+                                  ▼                                   ▼
++────────────────────────────────────────────────────+    +──────────────────────────────────────────+
+|         VERCEL SERVERLESS FUNCTIONS (/api/*)       |    |      PURE ENGINE (src/engine/*)          |
+|  - POST /api/twin-plan    (Solver + Validation)    |    |  - Deterministic Min-Cost Flow Solver    |
+|  - POST /api/twin-publish (Transactional RPC)      |    |  - 6-Item Hard Constraint Validator      |
+|  - POST /api/admin-invite (Service Role Provision) |    |  - 5-Factor Resilience Score (0-100)     |
+|  - GET  /api/twin-me/trips (Driver Scoped Trips)   |    |  - Zero Network Calls, Zero React        |
+|  - GET  /api/twin-me/orders(Buyer Scoped Orders)   |    +──────────────────────────────────────────+
+|  - PATCH/api/trip-status  (Driver Status Update)   |
+|  - User-keyed rate limiting, JWT verification      |
++─────────────────────────────────┬──────────────────+
+                                  │
+                                  ▼
++────────────────────────────────────────────────────────────────────────────────────────────────────+
+|                     SUPABASE MULTI-TENANT POSTGRESQL + ROW-LEVEL SECURITY                          |
+|  - Organizations (Tenant Isolation via public.current_org_id())                                   |
+|  - Profiles (Least-privilege RBAC: 'planner' | 'driver' | 'buyer', protected from self-escalation)  |
+|  - Supply Network Entities (suppliers, warehouses, buyers, routes, vehicles with CHECK constraints)|
+|  - Plans & Trips (Flattened dispatches with idempotency constraint (plan_id, vehicle_id...))       |
+|  - Security-Definer RPCs: publish_plan(), update_trip_status(), reset_demo_network()              |
+|  - Append-Only Audit Log (Every publish, invite, reset, status transition recorded)                |
++────────────────────────────────────────────────────────────────────────────────────────────────────+
+```
+
+### 🔐 Role-Based Access Control (RBAC) Matrix
+
+| Feature / Capability | Planner | Driver | Buyer | Anonymous |
+|---|---|---|---|---|
+| View Network Nodes & Corridors | Read / Write | Read-Only | Denied | Denied |
+| Configure & Simulate Disruptions | Full Access | Denied | Denied | Denied |
+| Solve Resilient Recovery Plans | Full Access | Denied | Denied | Denied |
+| Publish Dispatch Plan to Fleet | Full Access | Denied | Denied | Denied |
+| View Assigned Corridor Trips | All Org Trips | Own Trips Only (`vehicle_id`) | Denied | Denied |
+| Transition Trip Status (Accept/Start/Deliver) | Denied | Own Trips Only (via RPC) | Denied | Denied |
+| View Inbound Consignments & Orders | All Org Orders | Denied | Own Orders Only (`buyer_id`) | Denied |
+| Invite Team Members & Assign Roles | Full Access | Denied | Denied | Denied |
+| Reset Network to Baseline Demo | Full Access | Denied | Denied | Denied |
+| View Audit Trail Logs | Full Access | Denied | Denied | Denied |
 
 ```mermaid
 graph TB

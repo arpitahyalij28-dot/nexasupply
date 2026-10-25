@@ -2,7 +2,7 @@
 // Multi-page routing with data-driven state provider and 100% demo continuity.
 // Integrates 7-stage guided tour autoplay with narrative controls for evaluators and judges.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Header from './components/Header';
 import Navbar from './components/Navbar';
@@ -15,16 +15,22 @@ import { ClearDataConfirmModal, DemoPromptModal } from './components/ConfirmModa
 import { DataProvider } from './context/DataContext';
 import { ReRouteProvider, useReRoute } from './context/ReRouteContext';
 
-// Pages
 import Dashboard from './pages/Dashboard';
-import Fleet from './pages/Fleet';
-import Loads from './pages/Loads';
-import Assignments from './pages/Assignments';
-import Disruptions from './pages/Disruptions';
-import Settings from './pages/Settings';
-import Analytics from './pages/Analytics';
-import DataManagement from './pages/DataManagement';
+import RequireRole from './auth/RequireRole';
 import { AuthProvider } from './context/AuthContext';
+
+// Code-split / lazy-load secondary pages, auth, and role portals
+const Fleet = lazy(() => import('./pages/Fleet'));
+const Loads = lazy(() => import('./pages/Loads'));
+const Assignments = lazy(() => import('./pages/Assignments'));
+const Disruptions = lazy(() => import('./pages/Disruptions'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const DataManagement = lazy(() => import('./pages/DataManagement'));
+const Team = lazy(() => import('./pages/Team'));
+const MyTrips = lazy(() => import('./pages/MyTrips'));
+const MyOrders = lazy(() => import('./pages/MyOrders'));
+const Login = lazy(() => import('./pages/auth/Login'));
 
 function AppContent() {
   const navigate = useNavigate();
@@ -257,17 +263,38 @@ function AppContent() {
 
       {/* 3. Main Multi-Page Body */}
       <main className="flex-1 max-w-[1680px] w-full mx-auto p-4 sm:p-6 lg:p-8">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/fleet" element={<Fleet />} />
-          <Route path="/loads" element={<Loads />} />
-          <Route path="/assignments" element={<Assignments />} />
-          <Route path="/disruptions" element={<Disruptions />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/data" element={<DataManagement />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center min-h-[300px]">
+              <div className="flex items-center gap-3 px-5 py-3 rounded-2xl bg-white border border-slate-200 shadow-soft text-sm font-bold text-slate-700">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-ping" />
+                <span>Loading portal view...</span>
+              </div>
+            </div>
+          }
+        >
+          <Routes>
+            {/* Public Authentication Route */}
+            <Route path="/login" element={<Login />} />
+
+            {/* Operational Planner Routes */}
+            <Route path="/" element={<RequireRole roles={['planner']}><Dashboard /></RequireRole>} />
+            <Route path="/fleet" element={<RequireRole roles={['planner']}><Fleet /></RequireRole>} />
+            <Route path="/loads" element={<RequireRole roles={['planner']}><Loads /></RequireRole>} />
+            <Route path="/assignments" element={<RequireRole roles={['planner']}><Assignments /></RequireRole>} />
+            <Route path="/disruptions" element={<RequireRole roles={['planner']}><Disruptions /></RequireRole>} />
+            <Route path="/analytics" element={<RequireRole roles={['planner']}><Analytics /></RequireRole>} />
+            <Route path="/team" element={<RequireRole roles={['planner']}><Team /></RequireRole>} />
+            <Route path="/settings" element={<RequireRole roles={['planner']}><Settings /></RequireRole>} />
+            <Route path="/data" element={<RequireRole roles={['planner']}><DataManagement /></RequireRole>} />
+
+            {/* Driver & Buyer Dedicated Portals */}
+            <Route path="/my-trips" element={<RequireRole roles={['driver', 'planner']}><MyTrips /></RequireRole>} />
+            <Route path="/my-orders" element={<RequireRole roles={['buyer', 'planner']}><MyOrders /></RequireRole>} />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </main>
 
       {/* 4. Certified Footer */}

@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Truck,
   Activity,
@@ -10,17 +11,24 @@ import {
   Package,
   MoreVertical,
   ChevronDown,
+  User,
+  LogOut,
+  LogIn,
+  Users,
 } from 'lucide-react';
 import ShareJudgeModal from './ShareJudgeModal';
 import { useAuth } from '../context/AuthContext';
 import { useReRoute } from '../context/ReRouteContext';
 
 export default function Header({ onOpenDemoGuide, onResetAll }) {
+  const navigate = useNavigate();
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
   const moreRef = useRef(null);
+  const roleRef = useRef(null);
 
-  const { user, profile, isDemoUser } = useAuth();
+  const { user, profile, role, isDemoUser, setDemoRole, logout } = useAuth();
   const {
     isDemoMode,
     trucks = [],
@@ -38,11 +46,14 @@ export default function Header({ onOpenDemoGuide, onResetAll }) {
   const activeCount = trucks.length;
   const hasData = trucks.length > 0 || shipments.length > 0;
 
-  // Close "More" dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     function handleClickOutside(event) {
       if (moreRef.current && !moreRef.current.contains(event.target)) {
         setIsMoreOpen(false);
+      }
+      if (roleRef.current && !roleRef.current.contains(event.target)) {
+        setIsRoleMenuOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -204,9 +215,112 @@ export default function Header({ onOpenDemoGuide, onResetAll }) {
             )}
           </div>
 
+          {/* Role Persona Switcher Pill */}
+          <div className="relative" ref={roleRef}>
+              <button
+                onClick={() => setIsRoleMenuOpen((prev) => !prev)}
+                className="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 min-h-[38px] text-xs font-bold bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl transition-colors shadow-2xs cursor-pointer"
+                title="Active User Role"
+              >
+                <span>
+                  {role === 'driver' ? '🚚 Driver' : role === 'buyer' ? '📦 Buyer' : '👔 Planner'}
+                </span>
+                <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${isRoleMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
 
+              {isRoleMenuOpen && (
+                <div className="absolute right-0 mt-1.5 w-52 bg-white border border-[#E2E8F0] rounded-2xl shadow-soft-lg py-2 z-50 text-xs animate-in fade-in duration-100">
+                  <div className="px-3 py-1.5 border-b border-slate-100">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                      {isDemoUser ? 'Demo Persona Switcher' : 'Cloud User Profile'}
+                    </span>
+                    <span className="font-bold text-slate-900 truncate block mt-0.5">
+                      {profile?.full_name || user?.email || 'Logged In User'}
+                    </span>
+                  </div>
+
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setIsRoleMenuOpen(false);
+                        setDemoRole('planner');
+                        navigate('/');
+                      }}
+                      className={`w-full px-3 py-2 text-left flex items-center justify-between hover:bg-slate-50 cursor-pointer ${
+                        role === 'planner' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>👔</span>
+                        <span>Supply Planner</span>
+                      </span>
+                      {role === 'planner' && <span className="text-[10px] font-bold">ACTIVE</span>}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsRoleMenuOpen(false);
+                        setDemoRole('driver');
+                        navigate('/my-trips');
+                      }}
+                      className={`w-full px-3 py-2 text-left flex items-center justify-between hover:bg-slate-50 cursor-pointer ${
+                        role === 'driver' ? 'bg-amber-50 text-amber-700 font-bold' : 'text-slate-700'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>🚚</span>
+                        <span>Fleet Driver</span>
+                      </span>
+                      {role === 'driver' && <span className="text-[10px] font-bold">ACTIVE</span>}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsRoleMenuOpen(false);
+                        setDemoRole('buyer');
+                        navigate('/my-orders');
+                      }}
+                      className={`w-full px-3 py-2 text-left flex items-center justify-between hover:bg-slate-50 cursor-pointer ${
+                        role === 'buyer' ? 'bg-emerald-50 text-emerald-700 font-bold' : 'text-slate-700'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>📦</span>
+                        <span>Demand Buyer</span>
+                      </span>
+                      {role === 'buyer' && <span className="text-[10px] font-bold">ACTIVE</span>}
+                    </button>
+                  </div>
+
+                  <div className="border-t border-slate-100 my-1" />
+
+                  {isDemoUser ? (
+                    <Link
+                      to="/login"
+                      onClick={() => setIsRoleMenuOpen(false)}
+                      className="w-full px-3 py-2 text-left text-blue-600 hover:bg-blue-50 flex items-center gap-2 font-semibold cursor-pointer"
+                    >
+                      <LogIn className="w-4 h-4 text-blue-600" />
+                      <span>Cloud Sign In</span>
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setIsRoleMenuOpen(false);
+                        logout();
+                        navigate('/login');
+                      }}
+                      className="w-full px-3 py-2 text-left text-rose-600 hover:bg-rose-50 flex items-center gap-2 font-semibold cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4 text-rose-500" />
+                      <span>Sign Out</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
 
       <ShareJudgeModal isOpen={isShareOpen} onClose={() => setIsShareOpen(false)} />
     </header>
