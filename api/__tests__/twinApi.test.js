@@ -4,11 +4,9 @@
 // and audit logging.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import twinPlanHandler from '../twin-plan.js';
-import twinPublishHandler from '../twin-publish.js';
+import twinPlanHandler, { publishHandler as twinPublishHandler } from '../twin-plan.js';
 import adminInviteHandler from '../admin-invite.js';
-import twinMeTripsHandler from '../twin-me/trips.js';
-import twinMeOrdersHandler from '../twin-me/orders.js';
+import { tripsHandler as twinMeTripsHandler, ordersHandler as twinMeOrdersHandler } from '../twin-me.js';
 import tripStatusHandler from '../trip-status.js';
 import healthHandler from '../health.js';
 import { setSupabaseAdminClient } from '../_utils.js';
