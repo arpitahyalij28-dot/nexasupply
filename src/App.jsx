@@ -6,6 +6,7 @@ import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Header from './components/Header';
 import Navbar from './components/Navbar';
+import TrialBanner from './components/TrialBanner';
 import DemoGuideModal from './components/DemoGuideModal';
 import GuidedTourBar from './components/GuidedTourBar';
 import CoachmarkTour from './components/CoachmarkTour';
@@ -31,6 +32,7 @@ const Team = lazy(() => import('./pages/Team'));
 const MyTrips = lazy(() => import('./pages/MyTrips'));
 const MyOrders = lazy(() => import('./pages/MyOrders'));
 const Login = lazy(() => import('./pages/auth/Login'));
+const Pricing = lazy(() => import('./pages/Pricing'));
 
 function AppContent() {
   const navigate = useNavigate();
@@ -258,6 +260,9 @@ function AppContent() {
         onResetAll={resetDemo}
       />
 
+      {/* 1b. Expired Trial Banner (Non-blocking Demo Notice) */}
+      <TrialBanner />
+
       {/* 2. Top Navigation Tabs */}
       <Navbar />
 
@@ -276,6 +281,9 @@ function AppContent() {
           <Routes>
             {/* Public Authentication Route */}
             <Route path="/login" element={<Login />} />
+
+            {/* Public / Global Pricing Route */}
+            <Route path="/pricing" element={<Pricing />} />
 
             {/* Operational Planner Routes */}
             <Route path="/" element={<RequireRole roles={['planner']}><Dashboard /></RequireRole>} />

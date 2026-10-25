@@ -19,6 +19,7 @@ import {
 import ShareJudgeModal from './ShareJudgeModal';
 import { useAuth } from '../context/AuthContext';
 import { useReRoute } from '../context/ReRouteContext';
+import { usePlan } from '../lib/plan';
 
 export default function Header({ onOpenDemoGuide, onResetAll }) {
   const navigate = useNavigate();
@@ -38,6 +39,7 @@ export default function Header({ onOpenDemoGuide, onResetAll }) {
     setIsAddTruckOpen,
     setIsAddShipmentOpen,
   } = useReRoute();
+  const { status: planStatus, isTrial, isPro, isExpired, daysLeft } = usePlan();
 
   const isLocal = isDemoMode || !user || !profile || isDemoUser;
   const orgName = profile?.org_name || profile?.org_id || 'demo-org';
@@ -120,6 +122,44 @@ export default function Header({ onOpenDemoGuide, onResetAll }) {
 
         {/* Primary Controls & "More" Menu */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Subscription / Plan Status Pill */}
+          <Link
+            to="/pricing"
+            id="header-plan-pill"
+            className={`inline-flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-1.5 min-h-[38px] text-xs font-bold rounded-xl transition-all shadow-xs border cursor-pointer ${
+              isPro
+                ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                : isExpired
+                ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200 animate-pulse'
+                : isTrial
+                ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+            }`}
+            title="Subscription plan & free trial details"
+          >
+            {isPro ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
+                <span>Pro</span>
+              </>
+            ) : isExpired ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                <span>Trial ended</span>
+              </>
+            ) : isTrial ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                <span>Trial: {daysLeft} {daysLeft === 1 ? 'day' : 'days'} left</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Pricing</span>
+              </>
+            )}
+          </Link>
+
           {/* Primary Action 1: Add Truck */}
           <button
             onClick={() => setIsAddTruckOpen?.(true)}
@@ -161,7 +201,7 @@ export default function Header({ onOpenDemoGuide, onResetAll }) {
             <span className="hidden sm:inline">2-Min Demo Script</span>
           </button>
 
-          {/* "More" Dropdown Menu (Consolidates QR, Guide, and Clear All) */}
+          {/* "More" Dropdown Menu (Consolidates QR, Guide, Pricing and Clear All) */}
           <div className="relative" ref={moreRef}>
             <button
               onClick={() => setIsMoreOpen((prev) => !prev)}
@@ -173,7 +213,16 @@ export default function Header({ onOpenDemoGuide, onResetAll }) {
             </button>
 
             {isMoreOpen && (
-              <div className="absolute right-0 mt-1.5 w-48 bg-white border border-[#E2E8F0] rounded-xl shadow-soft-lg py-1.5 z-50 text-xs animate-in fade-in duration-100">
+              <div className="absolute right-0 mt-1.5 w-52 bg-white border border-[#E2E8F0] rounded-xl shadow-soft-lg py-1.5 z-50 text-xs animate-in fade-in duration-100">
+                <Link
+                  to="/pricing"
+                  onClick={() => setIsMoreOpen(false)}
+                  className="w-full px-3 py-2 text-left text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-purple-600" />
+                  <span>Logistics Twin Pro Pricing</span>
+                </Link>
+
                 <button
                   onClick={() => {
                     setIsMoreOpen(false);
