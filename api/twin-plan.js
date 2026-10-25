@@ -1,6 +1,6 @@
-// Logistics Twin - Trusted Serverless Plan Solver Endpoint
-// POST /api/twin-plan
-// Computes baseline, disrupted, and recovery plans server-side from DB network state.
+// Logistics Twin - Trusted Serverless Plan Solver & Publisher Endpoint
+// POST /api/twin-plan -> solves & saves comparison plans
+// POST /api/twin-publish -> publishes plan to active trips table via RPC
 // Only accessible to users with the 'planner' role.
 
 import { z } from 'zod';
@@ -19,11 +19,15 @@ import { calculateResilienceScore } from '../src/engine/resilience.js';
 import { getDemoNetwork } from '../src/data/networkDemo.js';
 import { mapDbToNetwork } from '../src/data/twinRepository.js';
 
-const requestSchema = z.object({
+const planRequestSchema = z.object({
   scenarioConfig: z.record(z.any()).default({}),
 });
 
-export default async function handler(req, res) {
+const publishRequestSchema = z.object({
+  planId: z.string().min(1, 'planId is required'),
+});
+
+export async function planHandler(req, res) {
   if (setCorsHeaders(req, res)) return;
 
   if (req.method !== 'POST') {
@@ -44,7 +48,7 @@ export default async function handler(req, res) {
 
   // 3. Validate request payload
   const body = parseBody(req);
-  const parsed = requestSchema.safeParse(body);
+  const parsed = planRequestSchema.safeParse(body);
   if (!parsed.success) {
     const errorMsg = (parsed.error.issues || parsed.error.errors || []).map((e) => e.message).join('; ');
     return errorResponse(res, 400, `Invalid request payload: ${errorMsg}`);
@@ -95,7 +99,7 @@ export default async function handler(req, res) {
     );
 
     // 8. Persist scenario into disruption_scenarios table
-    const { data: scenarioRecord, error: scnErr } = await client
+    const { data: scenarioRecord } = await client
       .from('disruption_scenarios')
       .insert({
         org_id: auth.orgId,
@@ -143,7 +147,7 @@ export default async function handler(req, res) {
       },
     ];
 
-    const { data: savedPlans, error: plansErr } = await client
+    const { data: savedPlans } = await client
       .from('plans')
       .insert(planRecords)
       .select();
@@ -172,4 +176,129 @@ export default async function handler(req, res) {
     logApiError('twin-plan', err, { orgId: auth.orgId, userId: auth.user.id });
     return errorResponse(res, 500, 'Planning computation encountered an internal failure');
   }
+}
+
+export async function publishHandler(req, res) {
+  if (setCorsHeaders(req, res)) return;
+
+  if (req.method !== 'POST') {
+    return errorResponse(res, 405, 'Method not allowed. Use POST.');
+  }
+
+  // 1. Authenticate caller and enforce planner role
+  const auth = await verifyAuth(req, ['planner']);
+  if (auth.error) {
+    return errorResponse(res, auth.status, auth.error);
+  }
+
+  // 2. Rate limit
+  const rate = checkRateLimit(req, auth.user.id);
+  if (!rate.allowed) {
+    return errorResponse(res, 429, 'Rate limit exceeded for publishing. Please wait.');
+  }
+
+  // 3. Validate body
+  const body = parseBody(req);
+  const parsed = publishRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    const errorMsg = (parsed.error.issues || parsed.error.errors || []).map((e) => e.message).join('; ');
+    return errorResponse(res, 400, `Invalid request: ${errorMsg}`);
+  }
+
+  const { planId } = parsed.data;
+
+  try {
+    const client = auth.client;
+
+    // 4. Fetch the plan record from DB ensuring it belongs to the planner's org
+    const { data: planRecord, error: planErr } = await client
+      .from('plans')
+      .select('*')
+      .eq('id', planId)
+      .eq('org_id', auth.orgId)
+      .maybeSingle();
+
+    if (planErr || !planRecord) {
+      return errorResponse(res, 404, `Plan '${planId}' not found in your organization.`);
+    }
+
+    // 5. Idempotency Check: Refuse duplicate publishing
+    if (planRecord.published) {
+      return errorResponse(res, 409, `Plan '${planId}' is already published.`);
+    }
+
+    // 6. Integrity check: Validate plan against network before publishing
+    const [supRes, whRes, buyRes, routeRes, vehRes] = await Promise.all([
+      client.from('suppliers').select('*').eq('org_id', auth.orgId),
+      client.from('warehouses').select('*').eq('org_id', auth.orgId),
+      client.from('buyers').select('*').eq('org_id', auth.orgId),
+      client.from('routes').select('*').eq('org_id', auth.orgId),
+      client.from('vehicles').select('*').eq('org_id', auth.orgId),
+    ]);
+
+    const network =
+      !whRes.data || whRes.data.length === 0
+        ? getDemoNetwork()
+        : mapDbToNetwork({
+            suppliers: supRes.data || [],
+            warehouses: whRes.data || [],
+            buyers: buyRes.data || [],
+            routes: routeRes.data || [],
+            vehicles: vehRes.data || [],
+          });
+
+    const validation = validateDispatchPlan(planRecord.plan, network);
+    if (!validation.isValid) {
+      return errorResponse(res, 400, 'Cannot publish plan: integrity checks failed', {
+        violations: validation.violations,
+      });
+    }
+
+    // 7. Invoke security-definer RPC publish_plan
+    const { data: tripCount, error: rpcErr } = await client.rpc('publish_plan', {
+      p_plan_id: planId,
+    });
+
+    if (rpcErr) {
+      logApiError('twin-publish-rpc', rpcErr, { planId, orgId: auth.orgId });
+      return errorResponse(res, 500, `Failed to execute plan publishing: ${rpcErr.message}`);
+    }
+
+    // 8. Record audit log
+    await client.from('audit_log').insert({
+      org_id: auth.orgId,
+      user_id: auth.user.id,
+      action: 'PUBLISH_PLAN',
+      entity: 'plans',
+      entity_id: planId,
+      details: {
+        planType: planRecord.plan_type,
+        tripsGenerated: tripCount,
+        publishedAt: new Date().toISOString(),
+      },
+    });
+
+    return jsonResponse(res, 200, {
+      success: true,
+      planId,
+      tripsPublished: tripCount,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logApiError('twin-publish', err, { planId, orgId: auth.orgId });
+    return errorResponse(res, 500, 'Internal server error while publishing plan');
+  }
+}
+
+export default async function handler(req, res) {
+  const isPublish =
+    req.url?.includes('publish') ||
+    req.query?.action === 'publish' ||
+    req.body?.action === 'publish' ||
+    (req.body && req.body.planId && !req.body.scenarioConfig);
+
+  if (isPublish) {
+    return publishHandler(req, res);
+  }
+  return planHandler(req, res);
 }

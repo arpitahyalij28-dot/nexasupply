@@ -1,8 +1,7 @@
 // Logistics Twin - Serverless API Endpoints Test Suite
 import { describe, it, expect } from 'vitest';
 import healthHandler from '../health.js';
-import optimizeHandler from '../optimize.js';
-import optimizeFleetHandler from '../optimize-fleet.js';
+import optimizeHandler, { optimizeFleetHandler } from '../optimize.js';
 import recoverHandler from '../recover.js';
 import weatherHandler from '../weather.js';
 import explainHandler from '../explain.js';
