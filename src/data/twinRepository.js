@@ -529,11 +529,11 @@ export class LocalAdapter {
     }
 
     const validTransitions = {
-      planned: ['accepted', 'failed'],
-      accepted: ['in_transit', 'failed'],
-      in_transit: ['delivered', 'failed'],
-      failed: ['planned', 'accepted', 'in_transit'],
-      delivered: [],
+      planned: ['accepted', 'in_transit', 'delivered', 'failed'],
+      accepted: ['in_transit', 'delivered', 'failed', 'planned'],
+      in_transit: ['delivered', 'failed', 'accepted', 'planned'],
+      failed: ['planned', 'accepted', 'in_transit', 'delivered'],
+      delivered: ['planned', 'in_transit', 'failed'],
     };
 
     const allowed = validTransitions[trip.status] || [];
