@@ -1,13 +1,12 @@
-// Logistics Twin - Optimization Endpoint (Single Truck & Fleet-Wide Combinatorial Assignment)
-// POST /api/optimize (single truck or fleet)
-// POST /api/optimize-fleet (rewritten to /api/optimize?mode=fleet)
-// Validates payload with zod, executes pure matching engine, returns ranked candidate backhauls or Hungarian assignments.
+// Logistics Twin - Optimization Endpoints
+// POST /api/optimize -> Single Truck candidate backhaul ranking
+// POST /api/optimize-fleet -> Kuhn-Munkres Hungarian fleet assignment
 
 import { z } from 'zod';
 import { setCorsHeaders, jsonResponse, errorResponse, parseBody, checkRateLimit } from './_utils.js';
 import { evaluateShipments, optimizeFleet } from '../src/engine/index.js';
 
-const SingleOptimizeSchema = z.object({
+const OptimizeSchema = z.object({
   truck: z.object({
     id: z.string(),
   }).passthrough(),
@@ -34,8 +33,19 @@ const OptimizeFleetSchema = z.object({
 });
 
 export async function singleOptimizeHandler(req, res) {
+  if (setCorsHeaders(req, res)) return;
+
+  if (req.method !== 'POST') {
+    return errorResponse(res, 405, 'Method not allowed. Use POST.');
+  }
+
+  const rateCheck = checkRateLimit(req);
+  if (!rateCheck.allowed) {
+    return errorResponse(res, 429, 'Rate limit exceeded.');
+  }
+
   const body = parseBody(req);
-  const parseResult = SingleOptimizeSchema.safeParse(body);
+  const parseResult = OptimizeSchema.safeParse(body);
 
   if (!parseResult.success) {
     return errorResponse(res, 400, 'Invalid request payload', parseResult.error.format());
@@ -63,6 +73,17 @@ export async function singleOptimizeHandler(req, res) {
 }
 
 export async function optimizeFleetHandler(req, res) {
+  if (setCorsHeaders(req, res)) return;
+
+  if (req.method !== 'POST') {
+    return errorResponse(res, 405, 'Method not allowed. Use POST.');
+  }
+
+  const rateCheck = checkRateLimit(req);
+  if (!rateCheck.allowed) {
+    return errorResponse(res, 429, 'Rate limit exceeded.');
+  }
+
   const body = parseBody(req);
   const parseResult = OptimizeFleetSchema.safeParse(body);
 
@@ -86,23 +107,15 @@ export async function optimizeFleetHandler(req, res) {
 }
 
 export default async function handler(req, res) {
-  if (setCorsHeaders(req, res)) return;
-
-  if (req.method !== 'POST') {
-    return errorResponse(res, 405, 'Method not allowed. Use POST.');
-  }
-
-  const rateCheck = checkRateLimit(req);
-  if (!rateCheck.allowed) {
-    return errorResponse(res, 429, 'Rate limit exceeded.');
-  }
-
   const body = parseBody(req);
-  const isFleet = req.query?.mode === 'fleet' || (body && Array.isArray(body.trucks));
+  const isFleet =
+    req.url?.includes('fleet') ||
+    req.query?.fleet === 'true' ||
+    body?.fleet === true ||
+    (Array.isArray(body?.trucks) && Array.isArray(body?.shipments));
 
   if (isFleet) {
     return optimizeFleetHandler(req, res);
   }
-
   return singleOptimizeHandler(req, res);
 }

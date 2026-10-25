@@ -1,6 +1,6 @@
-// Logistics Twin - Buyer Consignments & Driver Assigned Trips Consolidated Endpoint
-// GET /api/twin-me?resource=orders or /api/twin-me?resource=trips
-// Also supports rewrites from /api/twin-me/orders and /api/twin-me/trips.
+// Logistics Twin - Scoped Driver Trips & Buyer Consignments Endpoint
+// GET /api/twin-me/trips -> driver trips
+// GET /api/twin-me/orders -> buyer orders
 
 import {
   setCorsHeaders,
@@ -11,69 +11,9 @@ import {
   logApiError,
 } from './_utils.js';
 
-/**
- * Handler for Buyer Consignment Orders
- */
-export async function ordersHandler(req, res) {
-  if (req.method !== 'GET') {
-    return errorResponse(res, 405, 'Method not allowed. Use GET.');
-  }
-
-  // 1. Authenticate caller (buyers and planners can query orders)
-  const auth = await verifyAuth(req, ['buyer', 'planner']);
-  if (auth.error) {
-    return errorResponse(res, auth.status, auth.error);
-  }
-
-  // 2. Rate limit check
-  const rate = checkRateLimit(req, auth.user.id);
-  if (!rate.allowed) {
-    return errorResponse(res, 429, 'Rate limit exceeded. Please wait.');
-  }
-
-  try {
-    const client = auth.client;
-    let query = client
-      .from('trips')
-      .select('*')
-      .eq('org_id', auth.orgId);
-
-    // Least-privilege: Buyers can ONLY view trips matching their assigned buyer_id
-    if (auth.role === 'buyer') {
-      if (!auth.profile.buyer_id) {
-        return jsonResponse(res, 200, {
-          success: true,
-          orders: [],
-          message: 'No buyer depot is currently linked to your buyer profile.',
-        });
-      }
-      query = query.eq('buyer_id', auth.profile.buyer_id);
-    }
-
-    query = query.order('updated_at', { ascending: false });
-
-    const { data: orders, error: fetchErr } = await query;
-    if (fetchErr) {
-      logApiError('twin-me-orders', fetchErr, { orgId: auth.orgId, userId: auth.user.id });
-      return errorResponse(res, 500, `Failed to load orders: ${fetchErr.message}`);
-    }
-
-    return jsonResponse(res, 200, {
-      success: true,
-      orders: orders || [],
-      count: orders?.length || 0,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (err) {
-    logApiError('twin-me-orders-fatal', err, { orgId: auth.orgId });
-    return errorResponse(res, 500, 'Internal server error loading buyer consignments');
-  }
-}
-
-/**
- * Handler for Driver Assigned Trips
- */
 export async function tripsHandler(req, res) {
+  if (setCorsHeaders(req, res)) return;
+
   if (req.method !== 'GET') {
     return errorResponse(res, 405, 'Method not allowed. Use GET.');
   }
@@ -129,17 +69,68 @@ export async function tripsHandler(req, res) {
   }
 }
 
-export default async function handler(req, res) {
+export async function ordersHandler(req, res) {
   if (setCorsHeaders(req, res)) return;
 
-  const resource = req.query?.resource || (req.url?.includes('orders') ? 'orders' : req.url?.includes('trips') ? 'trips' : null);
+  if (req.method !== 'GET') {
+    return errorResponse(res, 405, 'Method not allowed. Use GET.');
+  }
 
-  if (resource === 'orders') {
+  // 1. Authenticate caller (buyers and planners can query orders)
+  const auth = await verifyAuth(req, ['buyer', 'planner']);
+  if (auth.error) {
+    return errorResponse(res, auth.status, auth.error);
+  }
+
+  // 2. Rate limit check
+  const rate = checkRateLimit(req, auth.user.id);
+  if (!rate.allowed) {
+    return errorResponse(res, 429, 'Rate limit exceeded. Please wait.');
+  }
+
+  try {
+    const client = auth.client;
+    let query = client
+      .from('trips')
+      .select('*')
+      .eq('org_id', auth.orgId);
+
+    // Least-privilege: Buyers can ONLY view trips matching their assigned buyer_id
+    if (auth.role === 'buyer') {
+      if (!auth.profile.buyer_id) {
+        return jsonResponse(res, 200, {
+          success: true,
+          orders: [],
+          message: 'No buyer depot is currently linked to your buyer profile.',
+        });
+      }
+      query = query.eq('buyer_id', auth.profile.buyer_id);
+    }
+
+    query = query.order('updated_at', { ascending: false });
+
+    const { data: orders, error: fetchErr } = await query;
+    if (fetchErr) {
+      logApiError('twin-me-orders', fetchErr, { orgId: auth.orgId, userId: auth.user.id });
+      return errorResponse(res, 500, `Failed to load orders: ${fetchErr.message}`);
+    }
+
+    return jsonResponse(res, 200, {
+      success: true,
+      orders: orders || [],
+      count: orders?.length || 0,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logApiError('twin-me-orders-fatal', err, { orgId: auth.orgId });
+    return errorResponse(res, 500, 'Internal server error loading buyer consignments');
+  }
+}
+
+export default async function handler(req, res) {
+  const isOrders = req.url?.includes('orders') || req.query?.type === 'orders';
+  if (isOrders) {
     return ordersHandler(req, res);
   }
-  if (resource === 'trips') {
-    return tripsHandler(req, res);
-  }
-
-  return errorResponse(res, 400, 'Invalid resource parameter. Specify ?resource=orders or ?resource=trips.');
+  return tripsHandler(req, res);
 }

@@ -2,20 +2,20 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/api/twin-me/orders",
-      "destination": "/api/twin-me?resource=orders"
-    },
-    {
       "source": "/api/twin-me/trips",
-      "destination": "/api/twin-me?resource=trips"
+      "destination": "/api/twin-me?type=trips"
     },
     {
-      "source": "/api/optimize-fleet",
-      "destination": "/api/optimize?mode=fleet"
+      "source": "/api/twin-me/orders",
+      "destination": "/api/twin-me?type=orders"
     },
     {
       "source": "/api/twin-publish",
       "destination": "/api/twin-plan?action=publish"
+    },
+    {
+      "source": "/api/optimize-fleet",
+      "destination": "/api/optimize?fleet=true"
     },
     {
       "source": "/((?!api/).*)",

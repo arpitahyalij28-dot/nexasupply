@@ -1,6 +1,6 @@
 // Logistics Twin - Trusted Serverless Plan Solver & Publisher Endpoint
-// POST /api/twin-plan (solver)
-// POST /api/twin-plan?action=publish (publisher) or rewrite from /api/twin-publish
+// POST /api/twin-plan -> solves & saves comparison plans
+// POST /api/twin-publish -> publishes plan to active trips table via RPC
 // Only accessible to users with the 'planner' role.
 
 import { z } from 'zod';
@@ -27,10 +27,13 @@ const publishRequestSchema = z.object({
   planId: z.string().min(1, 'planId is required'),
 });
 
-/**
- * Handles Plan Computation & Comparison Solver
- */
 export async function planHandler(req, res) {
+  if (setCorsHeaders(req, res)) return;
+
+  if (req.method !== 'POST') {
+    return errorResponse(res, 405, 'Method not allowed. Use POST.');
+  }
+
   // 1. Authenticate caller and enforce planner role
   const auth = await verifyAuth(req, ['planner']);
   if (auth.error) {
@@ -96,7 +99,7 @@ export async function planHandler(req, res) {
     );
 
     // 8. Persist scenario into disruption_scenarios table
-    const { data: scenarioRecord, error: scnErr } = await client
+    const { data: scenarioRecord } = await client
       .from('disruption_scenarios')
       .insert({
         org_id: auth.orgId,
@@ -144,7 +147,7 @@ export async function planHandler(req, res) {
       },
     ];
 
-    const { data: savedPlans, error: plansErr } = await client
+    const { data: savedPlans } = await client
       .from('plans')
       .insert(planRecords)
       .select();
@@ -175,10 +178,13 @@ export async function planHandler(req, res) {
   }
 }
 
-/**
- * Handles Plan Publishing
- */
 export async function publishHandler(req, res) {
+  if (setCorsHeaders(req, res)) return;
+
+  if (req.method !== 'POST') {
+    return errorResponse(res, 405, 'Method not allowed. Use POST.');
+  }
+
   // 1. Authenticate caller and enforce planner role
   const auth = await verifyAuth(req, ['planner']);
   if (auth.error) {
@@ -285,18 +291,14 @@ export async function publishHandler(req, res) {
 }
 
 export default async function handler(req, res) {
-  if (setCorsHeaders(req, res)) return;
-
-  if (req.method !== 'POST') {
-    return errorResponse(res, 405, 'Method not allowed. Use POST.');
-  }
-
-  const body = parseBody(req);
-  const isPublish = req.query?.action === 'publish' || (body && Boolean(body.planId));
+  const isPublish =
+    req.url?.includes('publish') ||
+    req.query?.action === 'publish' ||
+    req.body?.action === 'publish' ||
+    (req.body && req.body.planId && !req.body.scenarioConfig);
 
   if (isPublish) {
     return publishHandler(req, res);
   }
-
   return planHandler(req, res);
 }
