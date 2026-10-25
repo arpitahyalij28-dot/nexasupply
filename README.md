@@ -260,3 +260,14 @@ git add .
 git commit -m "feat: description"
 git push origin logistics-twin-features
 ```
+
+---
+
+## 💼 Business Model
+
+- **Plan**: **Logistics Twin Pro**
+- **Pricing**: **Rs 4,999 / month** (Indian format)
+- **Trial**: **First month free** (30-day interactive free trial)
+- **Billing Terms**: Rs 0 today, Rs 4,999 from day 31. Cancel anytime.
+- **Simulation**: This application operates in a client-side simulated demonstration mode. No real payment gateway is connected, and no real payment is taken. Users can test the 30-day trial, observe the non-blocking post-trial state, continue with simulated Pro, or reset the plan simulation anytime from `/pricing`, the Header status pill, Settings, or Data Management.
+
